@@ -1,6 +1,6 @@
 id=dash_evox_patch
 name=dash-evox-patch
-version=1.6.0
-versionCode=7
+version=generated-from-git
+versionCode=0
 author=bgwastu
 description=EvolutionX SystemUI, HyperCharge, speaker volume, brightness, rotation, and Android 16 fixes for POCO X8 Pro Max (dash)

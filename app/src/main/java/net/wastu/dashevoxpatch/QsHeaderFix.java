@@ -298,20 +298,8 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
                     && (statusValue == 2 || statusValue == 5);
             batteryLevel = XposedHelpers.getIntField(status, "level");
 
-            long quickChargeType = readLong("/sys/class/power_supply/usb/quick_charge_type");
-            long apdoMaxWatts = readLong("/sys/class/power_supply/usb/apdo_max");
-            long authenticated = readLong("/sys/class/power_supply/usb/pd_authentication");
-            long verificationDone = readLong("/sys/class/power_supply/usb/pd_verify_done");
-            String realType = readString("/sys/class/power_supply/usb/real_type");
             float frameworkMaxWatts = safeFloatField(status, "maxChargingWattage") / 1_000_000f;
-
-            boolean hyperCharge = quickChargeType >= 3
-                    || (apdoMaxWatts >= 90 && authenticated == 1 && verificationDone == 1);
-            boolean fastCharge = quickChargeType >= 1
-                    || apdoMaxWatts >= 18
-                    || "USB_PD".equals(realType)
-                    || frameworkMaxWatts >= 18f;
-            chargerClass = nowWired ? (hyperCharge ? 2 : fastCharge ? 1 : 0) : 0;
+            chargerClass = nowWired ? detectChargerClass(frameworkMaxWatts) : 0;
 
             long now = SystemClock.elapsedRealtime();
             if (nowWired && !wiredCharging) {
@@ -327,8 +315,37 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
         }
     }
 
+    private static int detectChargerClass(float frameworkMaxWatts) {
+        long quickChargeType = readLong("/sys/class/power_supply/usb/quick_charge_type");
+        long apdoMaxWatts = readLong("/sys/class/power_supply/usb/apdo_max");
+        long powerMaxWatts = readLong("/sys/class/power_supply/usb/power_max");
+        long authenticated = readLong("/sys/class/power_supply/usb/pd_authentication");
+        long verificationDone = readLong("/sys/class/power_supply/usb/pd_verify_done");
+        String realType = readString("/sys/class/power_supply/usb/real_type");
+
+        boolean verifiedHyperCharge = authenticated == 1
+                && verificationDone == 1
+                && (apdoMaxWatts >= 90 || powerMaxWatts >= 90);
+        if (quickChargeType >= 3 || verifiedHyperCharge) {
+            return 2;
+        }
+        if (quickChargeType >= 1
+                || apdoMaxWatts >= 18
+                || powerMaxWatts >= 18
+                || "USB_PD".equals(realType)
+                || frameworkMaxWatts >= 18f) {
+            return 1;
+        }
+        return 0;
+    }
+
+
     private static String buildChargingIndication(Object controller) {
         int controllerLevel = safeIntField(controller, "mBatteryLevel", batteryLevel);
+        int liveChargerClass = detectChargerClass(0f);
+        if (liveChargerClass > 0) {
+            chargerClass = liveChargerClass;
+        }
         float currentUa = Math.abs((float) readLong("/sys/class/power_supply/battery/current_now"));
         if (currentUa < 100_000f || currentUa > 30_000_000f) {
             currentUa = Math.abs(safeFloatField(controller, "mChargingCurrent"));
@@ -343,11 +360,12 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
         if (watts <= 0f) {
             watts = safeFloatField(controller, "mChargingWattage") / 1_000_000f;
         }
-        String icon = chargerClass == 2 ? "⚡⚡" : chargerClass == 1 ? "⚡" : "🐌";
+        String icon = chargerClass == 2 ? "⚡ ⚡" : chargerClass == 1 ? "⚡" : "🐌";
         String power = watts > 0f
                 ? String.format(Locale.US, "%.1fW", watts)
                 : "charging";
-        return controllerLevel + "% • " + icon + power + "\n" + estimateChargeTime(controllerLevel);
+        return controllerLevel + "% • " + icon + " " + power + "\n"
+                + estimateChargeTime(controllerLevel);
     }
 
     private static float readInputPowerWatts() {
