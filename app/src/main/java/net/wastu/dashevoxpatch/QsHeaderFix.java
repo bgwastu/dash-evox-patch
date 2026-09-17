@@ -22,6 +22,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class QsHeaderFix implements IXposedHookLoadPackage {
     private static final String SYSTEM_UI = "com.android.systemui";
     private static final String ROTATION_STATE = "dash_evox_rotation_state";
+    private static final String CHARGER_CLASS_STATE = "dash_evox_charger_class";
+    private static volatile android.content.ContentResolver contentResolver;
     private static final int START = 6;
     private static final int END = 7;
 
@@ -51,6 +53,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
                         }
                         installed = true;
                         Context context = (Context) param.args[0];
+                        contentResolver = context.getContentResolver();
                         ClassLoader classLoader = context.getClassLoader();
                         hookRotationPersistence(context);
                         hookVariableDate(classLoader);
@@ -316,6 +319,16 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
     }
 
     private static int detectChargerClass(float frameworkMaxWatts) {
+        if (contentResolver != null) {
+            int reportedClass = Settings.Secure.getInt(
+                    contentResolver,
+                    CHARGER_CLASS_STATE,
+                    0
+            );
+            if (reportedClass == 1 || reportedClass == 2) {
+                return reportedClass;
+            }
+        }
         long quickChargeType = readLong("/sys/class/power_supply/usb/quick_charge_type");
         long apdoMaxWatts = readLong("/sys/class/power_supply/usb/apdo_max");
         long powerMaxWatts = readLong("/sys/class/power_supply/usb/power_max");

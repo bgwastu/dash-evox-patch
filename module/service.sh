@@ -32,6 +32,8 @@ done
 delete_oem_unlock_prop || true
 log_property_state
 
+
+"$MODDIR/charge-state.sh" &
 sleep 5
 if load_rotation_state; then
   current_accelerometer=$(read_system_setting accelerometer_rotation)
