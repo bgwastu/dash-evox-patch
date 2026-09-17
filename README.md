@@ -9,14 +9,15 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 - No notification-dismiss vibration
 - Persistent rotation-lock state
 - Correct brightness scaling
-- 30-step media volume
+- 30-step media volume with a louder, audio-specific speaker curve
 - Stronger speaker output through MediaTek BesLoudness
+- HyperCharge status, live input power, and charge-time estimate on the lock screen
 - Android 16 OEM unlock property cleanup
 
 ## Requirements
 
 - EvolutionX Android 16 on `dash`
-- KernelSU
+- KernelSU with module mounting enabled
 - LSPosed or Vector
 
 ## Install

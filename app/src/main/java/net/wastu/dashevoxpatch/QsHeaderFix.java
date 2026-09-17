@@ -4,10 +4,15 @@ import android.content.Context;
 import android.database.ContentObserver;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.content.res.Resources;
 import android.view.View;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.util.Locale;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -20,6 +25,12 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
     private static final int START = 6;
     private static final int END = 7;
 
+    private static final long CHARGE_ESTIMATE_STABILIZE_MS = 30_000L;
+    private static volatile boolean wiredCharging;
+    private static volatile int chargerClass;
+    private static volatile int batteryLevel;
+    private static volatile long pluggedSinceMs;
+    private static volatile float smoothedBatteryCurrentUa;
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         if (!SYSTEM_UI.equals(loadPackageParam.packageName)) {
@@ -45,6 +56,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
                         hookVariableDate(classLoader);
                         hookHeaderInsets(classLoader);
                         hookNotificationDismissHaptics(classLoader);
+                        hookHyperCharge(classLoader);
                         XposedBridge.log("EvolutionXQsFix: hooks installed");
                     }
                 }
@@ -234,6 +246,183 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
         XposedHelpers.callMethod(header, "updateState", qsState, qsConstraints);
         header.requestLayout();
     }
+
+    private static void hookHyperCharge(ClassLoader classLoader) {
+        try {
+            Class<?> callbackClass = XposedHelpers.findClass(
+                    "com.android.systemui.statusbar.KeyguardIndicationController$BaseKeyguardCallback",
+                    classLoader
+            );
+            Class<?> batteryStatusClass = XposedHelpers.findClass(
+                    "com.android.settingslib.fuelgauge.BatteryStatus",
+                    classLoader
+            );
+            XposedHelpers.findAndHookMethod(
+                    callbackClass,
+                    "onRefreshBatteryInfo",
+                    batteryStatusClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            updateChargingState(param.args[0]);
+                        }
+                    }
+            );
+
+            Class<?> controllerClass = XposedHelpers.findClass(
+                    "com.android.systemui.statusbar.KeyguardIndicationController",
+                    classLoader
+            );
+            XposedHelpers.findAndHookMethod(
+                    controllerClass,
+                    "computePowerChargingStringIndication",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            if (wiredCharging) {
+                                param.setResult(buildChargingIndication(param.thisObject));
+                            }
+                        }
+                    }
+            );
+        } catch (Throwable throwable) {
+            XposedBridge.log("EvolutionXQsFix: failed to install HyperCharge hooks: " + throwable);
+        }
+    }
+
+    private static void updateChargingState(Object status) {
+        try {
+            int plugged = XposedHelpers.getIntField(status, "plugged");
+            int statusValue = XposedHelpers.getIntField(status, "status");
+            boolean nowWired = (plugged == 1 || plugged == 2)
+                    && (statusValue == 2 || statusValue == 5);
+            batteryLevel = XposedHelpers.getIntField(status, "level");
+
+            long quickChargeType = readLong("/sys/class/power_supply/usb/quick_charge_type");
+            long apdoMaxWatts = readLong("/sys/class/power_supply/usb/apdo_max");
+            long authenticated = readLong("/sys/class/power_supply/usb/pd_authentication");
+            long verificationDone = readLong("/sys/class/power_supply/usb/pd_verify_done");
+            String realType = readString("/sys/class/power_supply/usb/real_type");
+            float frameworkMaxWatts = safeFloatField(status, "maxChargingWattage") / 1_000_000f;
+
+            boolean hyperCharge = quickChargeType >= 3
+                    || (apdoMaxWatts >= 90 && authenticated == 1 && verificationDone == 1);
+            boolean fastCharge = quickChargeType >= 1
+                    || apdoMaxWatts >= 18
+                    || "USB_PD".equals(realType)
+                    || frameworkMaxWatts >= 18f;
+            chargerClass = nowWired ? (hyperCharge ? 2 : fastCharge ? 1 : 0) : 0;
+
+            long now = SystemClock.elapsedRealtime();
+            if (nowWired && !wiredCharging) {
+                pluggedSinceMs = now;
+                smoothedBatteryCurrentUa = 0f;
+            } else if (!nowWired) {
+                pluggedSinceMs = 0L;
+                smoothedBatteryCurrentUa = 0f;
+            }
+            wiredCharging = nowWired;
+        } catch (Throwable throwable) {
+            XposedBridge.log("EvolutionXQsFix: charging-state update failed: " + throwable);
+        }
+    }
+
+    private static String buildChargingIndication(Object controller) {
+        int controllerLevel = safeIntField(controller, "mBatteryLevel", batteryLevel);
+        float currentUa = Math.abs((float) readLong("/sys/class/power_supply/battery/current_now"));
+        if (currentUa < 100_000f || currentUa > 30_000_000f) {
+            currentUa = Math.abs(safeFloatField(controller, "mChargingCurrent"));
+        }
+        if (currentUa >= 100_000f && currentUa <= 30_000_000f) {
+            smoothedBatteryCurrentUa = smoothedBatteryCurrentUa == 0f
+                    ? currentUa
+                    : smoothedBatteryCurrentUa * 0.85f + currentUa * 0.15f;
+        }
+
+        float watts = readInputPowerWatts();
+        if (watts <= 0f) {
+            watts = safeFloatField(controller, "mChargingWattage") / 1_000_000f;
+        }
+        String icon = chargerClass == 2 ? "⚡⚡" : chargerClass == 1 ? "⚡" : "🐌";
+        String power = watts > 0f
+                ? String.format(Locale.US, "%.1fW", watts)
+                : "charging";
+        return controllerLevel + "% • " + icon + power + "\n" + estimateChargeTime(controllerLevel);
+    }
+
+    private static float readInputPowerWatts() {
+        long currentMa = readLong("/sys/class/power_supply/usb/input_current_now");
+        if (currentMa <= 0) {
+            currentMa = readLong("/sys/class/power_supply/usb/current_now");
+        }
+        long voltageMv = readLong("/sys/class/power_supply/usb/pmic_vbus");
+        if (voltageMv <= 0) {
+            voltageMv = readLong("/sys/class/power_supply/usb/voltage_now");
+        }
+        if (currentMa > 0 && currentMa < 20_000 && voltageMv > 0 && voltageMv < 30_000) {
+            return currentMa * voltageMv / 1_000_000f;
+        }
+        return 0f;
+    }
+
+    private static String estimateChargeTime(int level) {
+        long elapsed = SystemClock.elapsedRealtime() - pluggedSinceMs;
+        if (pluggedSinceMs == 0L
+                || elapsed < CHARGE_ESTIMATE_STABILIZE_MS
+                || smoothedBatteryCurrentUa < 300_000f) {
+            return "estimating…";
+        }
+        double currentMa = smoothedBatteryCurrentUa / 1000d;
+        double remainingMah = Math.max(0, 100 - level) * 8500d / 100d;
+        double taperFactor = level < 60 ? 1.12d : level < 80 ? 1.25d : level < 90 ? 1.45d : 1.8d;
+        long minutes = Math.max(1L, Math.min(
+                Math.round(remainingMah / currentMa * 60d * taperFactor),
+                720L
+        ));
+        if (minutes < 60L) {
+            return "~" + minutes + " min";
+        }
+        return String.format(Locale.US, "~%dh %02dm", minutes / 60L, minutes % 60L);
+    }
+
+    private static float safeFloatField(Object target, String name) {
+        try {
+            return XposedHelpers.getFloatField(target, name);
+        } catch (Throwable ignored) {
+            return 0f;
+        }
+    }
+
+    private static int safeIntField(Object target, String name, int fallback) {
+        try {
+            return XposedHelpers.getIntField(target, name);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
+
+    private static String readString(String path) {
+        File file = new File(path);
+        if (!file.canRead()) {
+            return "";
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String value = reader.readLine();
+            return value == null ? "" : value.trim();
+        } catch (Throwable ignored) {
+            return "";
+        }
+    }
+
+    private static long readLong(String path) {
+        try {
+            String value = readString(path);
+            return value.isEmpty() ? -1L : Long.parseLong(value);
+        } catch (Throwable ignored) {
+            return -1L;
+        }
+    }
+
 
     private static void hookNotificationDismissHaptics(ClassLoader classLoader) {
         Class<?> factoryClass = XposedHelpers.findClass(

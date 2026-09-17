@@ -35,6 +35,11 @@ if pm path io.github.bgwastu.dashevoxpatch >/dev/null 2>&1; then
   ui_print "- Removed legacy APK package: io.github.bgwastu.dashevoxpatch"
 fi
 
+if pm path dev.wastu.hypercharge >/dev/null 2>&1; then
+  pm uninstall dev.wastu.hypercharge >/dev/null 2>&1 || true
+  ui_print "- Removed standalone HyperCharge module (now integrated)"
+fi
+
 ROTATION_STATE_DIR=/data/adb/dash-evox-patch
 ROTATION_STATE_FILE="$ROTATION_STATE_DIR/rotation-state"
 if [ ! -f "$ROTATION_STATE_FILE" ]; then
@@ -76,5 +81,6 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/common.sh" 0 0 0644
 set_perm "$MODPATH/rotation-state.sh" 0 0 0644
 set_perm "$APK" 0 0 0644
+set_perm "$MODPATH/system/vendor/etc/default_volume_tables.xml" 0 0 0644
 
 ui_print "- Enable dash-evox-patch for System UI in LSPosed, then reboot"
