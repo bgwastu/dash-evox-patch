@@ -29,6 +29,7 @@ log_property_state() {
     echo "sys.brightness.disable_gamma_conversion=$(getprop sys.brightness.disable_gamma_conversion)"
     echo "ro.config.media_vol_steps=$(getprop ro.config.media_vol_steps)"
     echo "ro.vendor.audio.media.volume.steps=$(getprop ro.vendor.audio.media.volume.steps)"
+    echo "persist.vendor.audiohal.besloudness_state=$(getprop persist.vendor.audiohal.besloudness_state)"
     echo "sys.oem_unlock_allowed=$(getprop sys.oem_unlock_allowed)"
   } > "$MODDIR/property-state.log"
 }

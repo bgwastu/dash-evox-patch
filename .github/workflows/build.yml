@@ -1,0 +1,61 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Configure signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DASH_SIGNING_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/dash-evox-patch.jks"
+
+      - name: Build APK and KernelSU ZIP
+        env:
+          DASH_SIGNING_STORE_FILE: ${{ runner.temp }}/dash-evox-patch.jks
+          DASH_SIGNING_STORE_PASSWORD: ${{ secrets.DASH_SIGNING_STORE_PASSWORD }}
+          DASH_SIGNING_KEY_ALIAS: ${{ secrets.DASH_SIGNING_KEY_ALIAS }}
+          DASH_SIGNING_KEY_PASSWORD: ${{ secrets.DASH_SIGNING_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease packageKernelSuRelease
+
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/dash-evox-patch.apk
+          cp build/outputs/kernelsu/dash-evox-patch-kernelsu-*.zip dist/
+          sha256sum dist/* > dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dash-evox-patch-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish rolling release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest \
+              --prerelease \
+              --title "Latest CI build" \
+              --notes "Automatically built from the latest commit on main."
+          fi
+          gh release upload latest dist/* --clobber

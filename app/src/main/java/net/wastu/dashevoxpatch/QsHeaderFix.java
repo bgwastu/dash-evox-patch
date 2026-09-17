@@ -1,6 +1,10 @@
 package net.wastu.dashevoxpatch;
 
 import android.content.Context;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.content.res.Resources;
 import android.view.View;
 
@@ -12,6 +16,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public final class QsHeaderFix implements IXposedHookLoadPackage {
     private static final String SYSTEM_UI = "com.android.systemui";
+    private static final String ROTATION_STATE = "dash_evox_rotation_state";
     private static final int START = 6;
     private static final int END = 7;
 
@@ -36,6 +41,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
                         installed = true;
                         Context context = (Context) param.args[0];
                         ClassLoader classLoader = context.getClassLoader();
+                        hookRotationPersistence(context);
                         hookVariableDate(classLoader);
                         hookHeaderInsets(classLoader);
                         hookNotificationDismissHaptics(classLoader);
@@ -45,6 +51,67 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
         );
     }
 
+
+    private static void hookRotationPersistence(Context context) {
+        try {
+            android.content.ContentResolver resolver = context.getContentResolver();
+            String saved = Settings.Secure.getString(resolver, ROTATION_STATE);
+            int[] state = parseRotationState(saved);
+            if (state == null) {
+                saveRotationState(resolver);
+            } else {
+                Settings.System.putInt(resolver, Settings.System.USER_ROTATION, state[1]);
+                Settings.System.putInt(resolver, Settings.System.ACCELEROMETER_ROTATION, state[0]);
+            }
+
+            ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    saveRotationState(resolver);
+                }
+            };
+            resolver.registerContentObserver(
+                    Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
+                    false,
+                    observer
+            );
+            resolver.registerContentObserver(
+                    Settings.System.getUriFor(Settings.System.USER_ROTATION),
+                    false,
+                    observer
+            );
+        } catch (Throwable throwable) {
+            XposedBridge.log("EvolutionXQsFix: failed to preserve rotation state: " + throwable);
+        }
+    }
+
+    private static int[] parseRotationState(String saved) {
+        if (saved == null || !saved.matches("[01]:[0-3]")) {
+            return null;
+        }
+        return new int[]{saved.charAt(0) - '0', saved.charAt(2) - '0'};
+    }
+
+    private static void saveRotationState(android.content.ContentResolver resolver) {
+        int accelerometerRotation = Settings.System.getInt(
+                resolver,
+                Settings.System.ACCELEROMETER_ROTATION,
+                0
+        );
+        int userRotation = Settings.System.getInt(
+                resolver,
+                Settings.System.USER_ROTATION,
+                0
+        );
+        if ((accelerometerRotation == 0 || accelerometerRotation == 1)
+                && userRotation >= 0 && userRotation <= 3) {
+            Settings.Secure.putString(
+                    resolver,
+                    ROTATION_STATE,
+                    accelerometerRotation + ":" + userRotation
+            );
+        }
+    }
     private static void hookVariableDate(ClassLoader classLoader) {
         Class<?> controllerClass = XposedHelpers.findClass(
                 "com.android.systemui.statusbar.policy.VariableDateViewController",

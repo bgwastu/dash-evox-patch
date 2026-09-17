@@ -16,9 +16,19 @@ APK="$MODPATH/dash-evox-patch.apk"
 
 ui_print "- Device: $DEVICE"
 ui_print "- EvolutionX: $EVOLUTION_VERSION"
+
+if [ -x /data/adb/ksu/bin/resetprop ]; then
+  /data/adb/ksu/bin/resetprop -p persist.vendor.audiohal.besloudness_state 1
+elif command -v resetprop >/dev/null 2>&1; then
+  resetprop -p persist.vendor.audiohal.besloudness_state 1
+fi
 ui_print "- Installing SystemUI hook APK"
 
-pm install -r "$APK" >/dev/null 2>&1 || abort "Could not install dash-evox-patch.apk"
+if ! pm install -r "$APK" >/dev/null 2>&1; then
+  pm uninstall net.wastu.dashevoxpatch >/dev/null 2>&1 || true
+  pm install "$APK" >/dev/null 2>&1 || abort "Could not install dash-evox-patch.apk"
+  ui_print "- Reinstalled APK with the stable release signature"
+fi
 
 if pm path io.github.bgwastu.dashevoxpatch >/dev/null 2>&1; then
   pm uninstall io.github.bgwastu.dashevoxpatch >/dev/null 2>&1 || true
@@ -41,6 +51,17 @@ if [ ! -f "$ROTATION_STATE_FILE" ]; then
   chmod 0600 "$ROTATION_STATE_FILE"
   ui_print "- Saved current rotation state: $accelerometer_rotation/$user_rotation"
 fi
+
+saved_rotation=$(settings --user 0 get secure dash_evox_rotation_state 2>/dev/null)
+case "$saved_rotation" in
+  0:[0-3]|1:[0-3]) ;;
+  *)
+    accelerometer_rotation=$(sed -n 's/^accelerometer_rotation=//p' "$ROTATION_STATE_FILE" | head -1)
+    user_rotation=$(sed -n 's/^user_rotation=//p' "$ROTATION_STATE_FILE" | head -1)
+    settings --user 0 put secure dash_evox_rotation_state \
+      "$accelerometer_rotation:$user_rotation" >/dev/null 2>&1
+    ;;
+esac
 
 for legacy_module in slider_scaling_fix android16_oem_unlock_prop_cleanup; do
   legacy_path="/data/adb/modules/$legacy_module"
