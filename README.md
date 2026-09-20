@@ -8,7 +8,9 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 - Correct expanded header insets
 - No notification-dismiss vibration
 - Persistent rotation-lock state
-- Correct brightness scaling
+- Smooth auto-brightness response (absorbs raw ALS jitter via widened debounce windows and slowed automatic ramp rate)
+- Hardware IR blaster (ConsumerIR) support over MediaTek `/dev/irtx`
+- MiuiCamera compatibility fixes (Android 16 hidden API unblocker and MIUI resource wrapper bypass)
 - 30-step media volume with a louder, audio-specific speaker curve
 - Stronger speaker output through MediaTek BesLoudness
 - HyperCharge status, live input power, and charge-time estimate on the lock screen
@@ -23,7 +25,10 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 ## Install
 
 1. Flash the KernelSU ZIP.
-2. Enable `dash-evox-patch` for System UI only.
+2. In LSPosed / Vector, enable `dash-evox-patch` for:
+   - System UI (`com.android.systemui`)
+   - System Framework (`android` / `system`)
+   - MiuiCamera (`com.android.camera`, if using Mi Camera)
 3. Reboot.
 
 ## Build
