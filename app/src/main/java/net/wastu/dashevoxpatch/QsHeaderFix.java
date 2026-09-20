@@ -16,6 +16,7 @@ import java.util.Locale;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -23,6 +24,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZygoteInit {
     private static final String SYSTEM_FRAMEWORK = "android";
     private static final String SYSTEM_UI = "com.android.systemui";
+    private static final String MIUI_CAMERA = "com.android.camera";
     private static final String ROTATION_STATE = "dash_evox_rotation_state";
     private static final String CHARGER_CLASS_STATE = "dash_evox_charger_class";
     private static volatile android.content.ContentResolver contentResolver;
@@ -69,6 +71,11 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         if (SYSTEM_FRAMEWORK.equals(loadPackageParam.packageName)) {
             hookDisplayBrightnessSmoothing(loadPackageParam.classLoader);
+            return;
+        }
+
+        if (MIUI_CAMERA.equals(loadPackageParam.packageName)) {
+            hookMiuiCamera(loadPackageParam.classLoader);
             return;
         }
 
@@ -571,5 +578,27 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
             throw new Resources.NotFoundException(name);
         }
         return value;
+    }
+
+    private static void hookMiuiCamera(ClassLoader classLoader) {
+        try {
+            Class<?> leEClass = XposedHelpers.findClassIfExists("Le.e", classLoader);
+            if (leEClass != null) {
+                Class<?> leBClass = XposedHelpers.findClassIfExists("Le.b", classLoader);
+                if (leBClass != null) {
+                    XposedHelpers.findAndHookMethod(
+                            leEClass,
+                            "d",
+                            android.os.IBinder.class,
+                            android.content.res.Resources.class,
+                            leBClass,
+                            XC_MethodReplacement.DO_NOTHING
+                    );
+                    XposedBridge.log("dash-evox-patch: Successfully bypassed Le.e.d (MIUI resources wrapper) for com.android.camera");
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("dash-evox-patch: Failed to hook MiuiCamera: " + t);
+        }
     }
 }
