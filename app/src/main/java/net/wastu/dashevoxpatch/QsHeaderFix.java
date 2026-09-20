@@ -582,6 +582,27 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
 
     private static void hookMiuiCamera(ClassLoader classLoader) {
         try {
+            // 1. Completely exempt com.android.camera from ART hidden API restrictions
+            try {
+                Class<?> vmRuntimeClass = Class.forName("dalvik.system.VMRuntime");
+                java.lang.reflect.Method getRuntimeMethod = vmRuntimeClass.getDeclaredMethod("getRuntime");
+                Object vmRuntime = getRuntimeMethod.invoke(null);
+                java.lang.reflect.Method setHiddenApiExemptionsMethod = vmRuntimeClass.getDeclaredMethod(
+                        "setHiddenApiExemptions", String[].class);
+                setHiddenApiExemptionsMethod.invoke(vmRuntime, (Object) new String[]{"L"});
+                XposedBridge.log("dash-evox-patch: Exempted com.android.camera from all hidden API restrictions");
+            } catch (Throwable t) {
+                XposedBridge.log("dash-evox-patch: Failed to exempt hidden APIs: " + t);
+            }
+
+            // 2. Bypass setupGlobalVendorTagDescriptor crash
+            Class<?> eiFClass = XposedHelpers.findClassIfExists("Ei.f", classLoader);
+            if (eiFClass != null) {
+                XposedHelpers.findAndHookMethod(eiFClass, "f", XC_MethodReplacement.returnConstant(false));
+                XposedBridge.log("dash-evox-patch: Hooked Ei.f.f -> false (bypassing setupGlobalVendorTagDescriptor)");
+            }
+
+            // 3. Bypass Le.e.d (MIUI resources wrapper)
             Class<?> leEClass = XposedHelpers.findClassIfExists("Le.e", classLoader);
             if (leEClass != null) {
                 Class<?> leBClass = XposedHelpers.findClassIfExists("Le.b", classLoader);
