@@ -30,6 +30,13 @@ if ! pm install -r "$APK" >/dev/null 2>&1; then
   ui_print "- Reinstalled APK with the stable release signature"
 fi
 
+if [ -x /data/adb/lspd/cli ]; then
+  /data/adb/lspd/cli modules enable net.wastu.dashevoxpatch >/dev/null 2>&1 || true
+  /data/adb/lspd/cli scope add net.wastu.dashevoxpatch android/0 >/dev/null 2>&1 || true
+  /data/adb/lspd/cli scope add net.wastu.dashevoxpatch com.android.systemui/0 >/dev/null 2>&1 || true
+  ui_print "- Configured Vector scope: android + com.android.systemui"
+fi
+
 if pm path io.github.bgwastu.dashevoxpatch >/dev/null 2>&1; then
   pm uninstall io.github.bgwastu.dashevoxpatch >/dev/null 2>&1 || true
   ui_print "- Removed legacy APK package: io.github.bgwastu.dashevoxpatch"

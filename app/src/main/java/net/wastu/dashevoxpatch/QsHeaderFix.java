@@ -14,12 +14,14 @@ import java.io.File;
 import java.io.FileReader;
 import java.util.Locale;
 import de.robv.android.xposed.IXposedHookLoadPackage;
+import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-public final class QsHeaderFix implements IXposedHookLoadPackage {
+public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZygoteInit {
+    private static final String SYSTEM_FRAMEWORK = "android";
     private static final String SYSTEM_UI = "com.android.systemui";
     private static final String ROTATION_STATE = "dash_evox_rotation_state";
     private static final String CHARGER_CLASS_STATE = "dash_evox_charger_class";
@@ -33,8 +35,43 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
     private static volatile int batteryLevel;
     private static volatile long pluggedSinceMs;
     private static volatile float smoothedBatteryCurrentUa;
+
+    @Override
+    public void initZygote(StartupParam startupParam) throws Throwable {
+        if (!startupParam.startsSystemServer) {
+            return;
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.server.SystemServer",
+                    null,
+                    "run",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                ClassLoader classLoader = param.thisObject.getClass().getClassLoader();
+                                hookDisplayBrightnessSmoothing(classLoader);
+                                XposedBridge.log("dash-evox-patch: Installed display brightness smoothing hooks into system_server");
+                            } catch (Throwable t) {
+                                XposedBridge.log("dash-evox-patch: Failed to install brightness hooks: " + t);
+                            }
+                        }
+                    }
+            );
+        } catch (Throwable t) {
+            XposedBridge.log("dash-evox-patch: Failed to hook SystemServer.run: " + t);
+        }
+    }
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) {
+        if (SYSTEM_FRAMEWORK.equals(loadPackageParam.packageName)) {
+            hookDisplayBrightnessSmoothing(loadPackageParam.classLoader);
+            return;
+        }
+
         if (!SYSTEM_UI.equals(loadPackageParam.packageName)) {
             return;
         }
@@ -64,6 +101,55 @@ public final class QsHeaderFix implements IXposedHookLoadPackage {
                     }
                 }
         );
+    }
+
+    private void hookDisplayBrightnessSmoothing(ClassLoader classLoader) {
+        try {
+            Class<?> abcClass = XposedHelpers.findClassIfExists(
+                    "com.android.server.display.AutomaticBrightnessController",
+                    classLoader);
+            if (abcClass != null) {
+                XposedBridge.hookAllConstructors(abcClass, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            XposedHelpers.setLongField(param.thisObject, "mBrighteningLightDebounceConfig", 2000L);
+                            XposedHelpers.setLongField(param.thisObject, "mDarkeningLightDebounceConfig", 4000L);
+                            XposedHelpers.setLongField(param.thisObject, "mBrighteningLightDebounceConfigIdle", 2000L);
+                            XposedHelpers.setLongField(param.thisObject, "mDarkeningLightDebounceConfigIdle", 4000L);
+                            XposedBridge.log("dash-evox-patch: Patched AutomaticBrightnessController debounce windows (2000ms / 4000ms)");
+                        } catch (Throwable t) {
+                            XposedBridge.log("dash-evox-patch: Failed to set debounce fields: " + t);
+                        }
+                    }
+                });
+            }
+
+            Class<?> dpcClass = XposedHelpers.findClassIfExists(
+                    "com.android.server.display.DisplayPowerController",
+                    classLoader);
+            if (dpcClass != null) {
+                XposedHelpers.findAndHookMethod(dpcClass, "loadBrightnessRampRates", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            float slowDecrease = XposedHelpers.getFloatField(param.thisObject, "mBrightnessRampRateSlowDecrease");
+                            float factor = 2000.0f / 3946.0f;
+                            float newSlow = slowDecrease * factor;
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowDecrease", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowIncrease", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowDecreaseIdle", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowIncreaseIdle", newSlow);
+                            XposedBridge.log("dash-evox-patch: Patched DisplayPowerController slow ramp rate: " + slowDecrease + " -> " + newSlow);
+                        } catch (Throwable t) {
+                            XposedBridge.log("dash-evox-patch: Failed to patch brightness ramp rates: " + t);
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            XposedBridge.log("dash-evox-patch: Failed to hook display brightness smoothing: " + t);
+        }
     }
 
 
