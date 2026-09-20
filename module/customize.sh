@@ -90,6 +90,7 @@ set_perm "$MODPATH/common.sh" 0 0 0644
 set_perm "$MODPATH/rotation-state.sh" 0 0 0644
 set_perm "$APK" 0 0 0644
 set_perm "$MODPATH/system/vendor/etc/default_volume_tables.xml" 0 0 0644
+set_perm "$MODPATH/system.prop" 0 0 0644
 if [ -f "$MODPATH/vendor/bin/hw/android.hardware.ir-service.lineage" ]; then
   set_perm "$MODPATH/vendor/bin/hw/android.hardware.ir-service.lineage" 0 2000 0755
   chcon u:object_r:hal_ir_default_exec:s0 "$MODPATH/vendor/bin/hw/android.hardware.ir-service.lineage" 2>/dev/null || true
