@@ -339,13 +339,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         setCollapsedHeaderTranslation(qqsConstraints, resources, "clock", collapsedHeaderTopInset);
         setCollapsedHeaderTranslation(qqsConstraints, resources, "date", collapsedHeaderTopInset);
 
-        int systemIcons = resources.getIdentifier("shade_header_system_icons", "id", SYSTEM_UI);
-        if (systemIcons != 0) {
-            XposedHelpers.callMethod(qqsConstraints, "setTranslationY", systemIcons, collapsedHeaderTopInset);
-        } else {
-            setCollapsedHeaderTranslation(qqsConstraints, resources, "statusIcons", collapsedHeaderTopInset);
-            setCollapsedHeaderTranslation(qqsConstraints, resources, "batteryRemainingIcon", collapsedHeaderTopInset);
-        }
+        XposedHelpers.callMethod(qqsConstraints, "setTranslationY", systemIcons, collapsedHeaderTopInset);
         setCollapsedHeaderTranslation(qqsConstraints, resources, "privacy_container", collapsedHeaderTopInset);
         setCollapsedHeaderTranslation(qqsConstraints, resources, "carrier_group", collapsedHeaderTopInset);
         XposedHelpers.callMethod(header, "updateState", qqsState, qqsConstraints);
