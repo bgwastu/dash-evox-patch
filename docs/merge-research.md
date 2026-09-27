@@ -1,11 +1,10 @@
 # Merge research: APK hooks and root property fixes
 
-## Existing pieces
+## Current implementation
 
-The current project is an LSPosed APK scoped to `com.android.systemui`. Two separate KernelSU modules are installed on the target device:
+The patch ships as one KernelSU module with a bundled LSPosed APK. The module sets `sys.brightness.disable_gamma_conversion=false`, `ro.config.media_vol_steps=30`, and `persist.vendor.audiohal.besloudness_state=1` before framework startup. After boot it restores rotation state, reasserts BesLoudness, removes the obsolete `sys.oem_unlock_allowed` property if present, and starts the charging-status updater.
 
-- `slider_scaling_fix` sets `sys.brightness.disable_gamma_conversion=false`, `ro.config.media_vol_steps=30`, and `ro.vendor.audio.media.volume.steps=30` in `post-fs-data.sh`.
-- `android16_oem_unlock_prop_cleanup` deletes `sys.oem_unlock_allowed` in both `post-fs-data.sh` and `service.sh`.
+The updated vendor image already supplies `ro.vendor.audio.media.volume.steps=30`; the patch does not override it. It still sets Android's generic `ro.config.media_vol_steps=30`, which was absent from the ROM before the patch. Installation disables the two older standalone property modules to avoid duplicate writes.
 
 ## Primary-source findings
 

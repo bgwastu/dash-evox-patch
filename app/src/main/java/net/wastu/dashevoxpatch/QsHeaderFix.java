@@ -30,6 +30,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     private static volatile android.content.ContentResolver contentResolver;
     private static final int START = 6;
     private static final int END = 7;
+    private static final int COLLAPSED_HEADER_TOP_INSET_DP = 8;
 
     private static final long CHARGE_ESTIMATE_STABILIZE_MS = 30_000L;
     private static volatile boolean wiredCharging;
@@ -333,6 +334,20 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         XposedHelpers.callMethod(qqsConstraints, "clear", date, END);
         XposedHelpers.callMethod(qqsConstraints, "constrainWidth", date, -2);
         XposedHelpers.callMethod(qqsConstraints, "constrainMinWidth", date, minimumDateWidth);
+        float collapsedHeaderTopInset = COLLAPSED_HEADER_TOP_INSET_DP
+                * resources.getDisplayMetrics().density;
+        setCollapsedHeaderTranslation(qqsConstraints, resources, "clock", collapsedHeaderTopInset);
+        setCollapsedHeaderTranslation(qqsConstraints, resources, "date", collapsedHeaderTopInset);
+
+        int systemIcons = resources.getIdentifier("shade_header_system_icons", "id", SYSTEM_UI);
+        if (systemIcons != 0) {
+            XposedHelpers.callMethod(qqsConstraints, "setTranslationY", systemIcons, collapsedHeaderTopInset);
+        } else {
+            setCollapsedHeaderTranslation(qqsConstraints, resources, "statusIcons", collapsedHeaderTopInset);
+            setCollapsedHeaderTranslation(qqsConstraints, resources, "batteryRemainingIcon", collapsedHeaderTopInset);
+        }
+        setCollapsedHeaderTranslation(qqsConstraints, resources, "privacy_container", collapsedHeaderTopInset);
+        setCollapsedHeaderTranslation(qqsConstraints, resources, "carrier_group", collapsedHeaderTopInset);
         XposedHelpers.callMethod(header, "updateState", qqsState, qqsConstraints);
 
         Object qsConstraints = XposedHelpers.callMethod(header, "getConstraintSet", qsState);
@@ -341,6 +356,18 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         XposedHelpers.callMethod(qsConstraints, "connect", systemIcons, END, endGuide, END);
         XposedHelpers.callMethod(header, "updateState", qsState, qsConstraints);
         header.requestLayout();
+    }
+
+    private static void setCollapsedHeaderTranslation(
+            Object constraints,
+            Resources resources,
+            String viewName,
+            float translationY
+    ) {
+        int viewId = resources.getIdentifier(viewName, "id", SYSTEM_UI);
+        if (viewId != 0) {
+            XposedHelpers.callMethod(constraints, "setTranslationY", viewId, translationY);
+        }
     }
 
     private static void hookHyperCharge(ClassLoader classLoader) {

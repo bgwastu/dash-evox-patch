@@ -5,7 +5,7 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 ## Features
 
 - Persistent Quick Settings date with calendar shortcut
-- Correct expanded header insets
+- Correct expanded header insets and add 8dp top spacing to the collapsed shade header
 - No notification-dismiss vibration
 - Persistent rotation-lock state
 - Smooth auto-brightness response (absorbs raw ALS jitter via widened debounce windows and slowed automatic ramp rate)
