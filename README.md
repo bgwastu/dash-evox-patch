@@ -9,12 +9,13 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 - No notification-dismiss vibration
 - Persistent rotation-lock state
 - Smooth auto-brightness response (absorbs raw ALS jitter via widened debounce windows and slowed automatic ramp rate)
-- Hardware IR blaster (ConsumerIR) support over MediaTek `/dev/irtx`
 - MiuiCamera compatibility fixes (Android 16 hidden API unblocker and MIUI resource wrapper bypass)
 - 30-step media volume with a louder, audio-specific speaker curve
 - Stronger speaker output through MediaTek BesLoudness
 - HyperCharge status, live input power, and charge-time estimate on the lock screen
 - Android 16 OEM unlock property cleanup
+
+ConsumerIR is provided by the current EvolutionX vendor image. This module leaves the ROM's active MediaTek IR service and `/dev/irtx` backend untouched.
 
 ## Requirements
 

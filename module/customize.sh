@@ -49,7 +49,9 @@ fi
 
 ROTATION_STATE_DIR=/data/adb/dash-evox-patch
 ROTATION_STATE_FILE="$ROTATION_STATE_DIR/rotation-state"
+rotation_state_is_new=0
 if [ ! -f "$ROTATION_STATE_FILE" ]; then
+  rotation_state_is_new=1
   accelerometer_rotation=$(settings --user 0 get system accelerometer_rotation 2>/dev/null)
   user_rotation=$(settings --user 0 get system user_rotation 2>/dev/null)
   case "$accelerometer_rotation" in 0|1) ;; *) accelerometer_rotation=0 ;; esac
@@ -64,16 +66,21 @@ if [ ! -f "$ROTATION_STATE_FILE" ]; then
   ui_print "- Saved current rotation state: $accelerometer_rotation/$user_rotation"
 fi
 
-saved_rotation=$(settings --user 0 get secure dash_evox_rotation_state 2>/dev/null)
-case "$saved_rotation" in
-  0:[0-3]|1:[0-3]) ;;
-  *)
-    accelerometer_rotation=$(sed -n 's/^accelerometer_rotation=//p' "$ROTATION_STATE_FILE" | head -1)
-    user_rotation=$(sed -n 's/^user_rotation=//p' "$ROTATION_STATE_FILE" | head -1)
-    settings --user 0 put secure dash_evox_rotation_state \
-      "$accelerometer_rotation:$user_rotation" >/dev/null 2>&1
-    ;;
-esac
+if [ "$rotation_state_is_new" = 1 ]; then
+  settings --user 0 put secure dash_evox_rotation_state \
+    "$accelerometer_rotation:$user_rotation" >/dev/null 2>&1
+else
+  saved_rotation=$(settings --user 0 get secure dash_evox_rotation_state 2>/dev/null)
+  case "$saved_rotation" in
+    0:[0-3]|1:[0-3]) ;;
+    *)
+      accelerometer_rotation=$(sed -n 's/^accelerometer_rotation=//p' "$ROTATION_STATE_FILE" | head -1)
+      user_rotation=$(sed -n 's/^user_rotation=//p' "$ROTATION_STATE_FILE" | head -1)
+      settings --user 0 put secure dash_evox_rotation_state \
+        "$accelerometer_rotation:$user_rotation" >/dev/null 2>&1
+      ;;
+  esac
+fi
 
 for legacy_module in slider_scaling_fix android16_oem_unlock_prop_cleanup; do
   legacy_path="/data/adb/modules/$legacy_module"
@@ -90,11 +97,5 @@ set_perm "$MODPATH/common.sh" 0 0 0644
 set_perm "$MODPATH/rotation-state.sh" 0 0 0644
 set_perm "$APK" 0 0 0644
 set_perm "$MODPATH/system/vendor/etc/default_volume_tables.xml" 0 0 0644
-set_perm "$MODPATH/system.prop" 0 0 0644
-if [ -f "$MODPATH/vendor/bin/hw/android.hardware.ir-service.lineage" ]; then
-  set_perm "$MODPATH/vendor/bin/hw/android.hardware.ir-service.lineage" 0 2000 0755
-  chcon u:object_r:hal_ir_default_exec:s0 "$MODPATH/vendor/bin/hw/android.hardware.ir-service.lineage" 2>/dev/null || true
-  ui_print "- Configured MediaTek IRTX ConsumerIR HAL"
-fi
 
 ui_print "- Enable dash-evox-patch for System UI in LSPosed, then reboot"
