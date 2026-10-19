@@ -7,6 +7,7 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 - Persistent Quick Settings date with calendar shortcut
 - Correct expanded header insets
 - No notification-dismiss vibration
+- Brightness slider uses the gamma curve instead of the ROM's linear curve
 - Smooth auto-brightness response (absorbs raw ALS jitter via widened debounce windows and slowed automatic ramp rate)
 - HyperCharge, fast-charge, or normal charging status, live input power, and a charge-time estimate on the lock screen
 

@@ -52,6 +52,7 @@ for legacy_module in slider_scaling_fix android16_oem_unlock_prop_cleanup; do
   fi
 done
 
+set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/charge-state.sh" 0 0 0755
 set_perm "$APK" 0 0 0644
