@@ -1,9 +1,6 @@
 package net.wastu.dashevoxpatch;
 
 import android.content.Context;
-import android.database.ContentObserver;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.content.res.Resources;
@@ -16,7 +13,6 @@ import java.util.Locale;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XC_MethodReplacement;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
@@ -24,8 +20,6 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZygoteInit {
     private static final String SYSTEM_FRAMEWORK = "android";
     private static final String SYSTEM_UI = "com.android.systemui";
-    private static final String MIUI_CAMERA = "com.android.camera";
-    private static final String ROTATION_STATE = "dash_evox_rotation_state";
     private static final String CHARGER_CLASS_STATE = "dash_evox_charger_class";
     private static volatile android.content.ContentResolver contentResolver;
     private static final int START = 6;
@@ -74,11 +68,6 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
             return;
         }
 
-        if (MIUI_CAMERA.equals(loadPackageParam.packageName)) {
-            hookMiuiCamera(loadPackageParam.classLoader);
-            return;
-        }
-
         if (!SYSTEM_UI.equals(loadPackageParam.packageName)) {
             return;
         }
@@ -99,7 +88,6 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                         Context context = (Context) param.args[0];
                         contentResolver = context.getContentResolver();
                         ClassLoader classLoader = context.getClassLoader();
-                        hookRotationPersistence(context);
                         hookVariableDate(classLoader);
                         hookHeaderInsets(classLoader);
                         hookNotificationDismissHaptics(classLoader);
@@ -160,66 +148,6 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     }
 
 
-    private static void hookRotationPersistence(Context context) {
-        try {
-            android.content.ContentResolver resolver = context.getContentResolver();
-            String saved = Settings.Secure.getString(resolver, ROTATION_STATE);
-            int[] state = parseRotationState(saved);
-            if (state == null) {
-                saveRotationState(resolver);
-            } else {
-                Settings.System.putInt(resolver, Settings.System.USER_ROTATION, state[1]);
-                Settings.System.putInt(resolver, Settings.System.ACCELEROMETER_ROTATION, state[0]);
-            }
-
-            ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
-                @Override
-                public void onChange(boolean selfChange) {
-                    saveRotationState(resolver);
-                }
-            };
-            resolver.registerContentObserver(
-                    Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
-                    false,
-                    observer
-            );
-            resolver.registerContentObserver(
-                    Settings.System.getUriFor(Settings.System.USER_ROTATION),
-                    false,
-                    observer
-            );
-        } catch (Throwable throwable) {
-            XposedBridge.log("EvolutionXQsFix: failed to preserve rotation state: " + throwable);
-        }
-    }
-
-    private static int[] parseRotationState(String saved) {
-        if (saved == null || !saved.matches("[01]:[0-3]")) {
-            return null;
-        }
-        return new int[]{saved.charAt(0) - '0', saved.charAt(2) - '0'};
-    }
-
-    private static void saveRotationState(android.content.ContentResolver resolver) {
-        int accelerometerRotation = Settings.System.getInt(
-                resolver,
-                Settings.System.ACCELEROMETER_ROTATION,
-                0
-        );
-        int userRotation = Settings.System.getInt(
-                resolver,
-                Settings.System.USER_ROTATION,
-                0
-        );
-        if ((accelerometerRotation == 0 || accelerometerRotation == 1)
-                && userRotation >= 0 && userRotation <= 3) {
-            Settings.Secure.putString(
-                    resolver,
-                    ROTATION_STATE,
-                    accelerometerRotation + ":" + userRotation
-            );
-        }
-    }
     private static void hookVariableDate(ClassLoader classLoader) {
         Class<?> controllerClass = XposedHelpers.findClass(
                 "com.android.systemui.statusbar.policy.VariableDateViewController",
@@ -466,11 +394,18 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         if (watts <= 0f) {
             watts = safeFloatField(controller, "mChargingWattage") / 1_000_000f;
         }
-        String icon = chargerClass == 2 ? "⚡ ⚡" : chargerClass == 1 ? "⚡" : "🐌";
+        String status;
+        if (chargerClass == 2) {
+            status = "HyperCharge";
+        } else if (chargerClass == 1) {
+            status = "Fast charge";
+        } else {
+            status = "Charging";
+        }
         String power = watts > 0f
-                ? String.format(Locale.US, "%.1fW", watts)
-                : "charging";
-        return controllerLevel + "% • " + icon + " " + power + "\n"
+                ? String.format(Locale.US, " %.1fW", watts)
+                : "";
+        return controllerLevel + "% • " + status + power + "\n"
                 + estimateChargeTime(controllerLevel);
     }
 
@@ -580,46 +515,4 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         return value;
     }
 
-    private static void hookMiuiCamera(ClassLoader classLoader) {
-        try {
-            // 1. Completely exempt com.android.camera from ART hidden API restrictions
-            try {
-                Class<?> vmRuntimeClass = Class.forName("dalvik.system.VMRuntime");
-                java.lang.reflect.Method getRuntimeMethod = vmRuntimeClass.getDeclaredMethod("getRuntime");
-                Object vmRuntime = getRuntimeMethod.invoke(null);
-                java.lang.reflect.Method setHiddenApiExemptionsMethod = vmRuntimeClass.getDeclaredMethod(
-                        "setHiddenApiExemptions", String[].class);
-                setHiddenApiExemptionsMethod.invoke(vmRuntime, (Object) new String[]{"L"});
-                XposedBridge.log("dash-evox-patch: Exempted com.android.camera from all hidden API restrictions");
-            } catch (Throwable t) {
-                XposedBridge.log("dash-evox-patch: Failed to exempt hidden APIs: " + t);
-            }
-
-            // 2. Bypass setupGlobalVendorTagDescriptor crash
-            Class<?> eiFClass = XposedHelpers.findClassIfExists("Ei.f", classLoader);
-            if (eiFClass != null) {
-                XposedHelpers.findAndHookMethod(eiFClass, "f", XC_MethodReplacement.returnConstant(false));
-                XposedBridge.log("dash-evox-patch: Hooked Ei.f.f -> false (bypassing setupGlobalVendorTagDescriptor)");
-            }
-
-            // 3. Bypass Le.e.d (MIUI resources wrapper)
-            Class<?> leEClass = XposedHelpers.findClassIfExists("Le.e", classLoader);
-            if (leEClass != null) {
-                Class<?> leBClass = XposedHelpers.findClassIfExists("Le.b", classLoader);
-                if (leBClass != null) {
-                    XposedHelpers.findAndHookMethod(
-                            leEClass,
-                            "d",
-                            android.os.IBinder.class,
-                            android.content.res.Resources.class,
-                            leBClass,
-                            XC_MethodReplacement.DO_NOTHING
-                    );
-                    XposedBridge.log("dash-evox-patch: Successfully bypassed Le.e.d (MIUI resources wrapper) for com.android.camera");
-                }
-            }
-        } catch (Throwable t) {
-            XposedBridge.log("dash-evox-patch: Failed to hook MiuiCamera: " + t);
-        }
-    }
 }
