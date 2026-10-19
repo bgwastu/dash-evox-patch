@@ -88,11 +88,11 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                         Context context = (Context) param.args[0];
                         contentResolver = context.getContentResolver();
                         ClassLoader classLoader = context.getClassLoader();
-                        hookVariableDate(classLoader);
-                        hookHeaderInsets(classLoader);
-                        hookNotificationDismissHaptics(classLoader);
-                        hookHyperCharge(classLoader);
-                        XposedBridge.log("EvolutionXQsFix: hooks installed");
+                        runHook("quick settings date", () -> hookVariableDate(classLoader));
+                        runHook("header insets", () -> hookHeaderInsets(classLoader));
+                        runHook("notification haptics", () -> hookNotificationDismissHaptics(classLoader));
+                        runHook("hypercharge", () -> hookHyperCharge(classLoader));
+                        XposedBridge.log("dash-evox-patch: SystemUI hooks installed");
                     }
                 }
         );
@@ -110,8 +110,6 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                         try {
                             XposedHelpers.setLongField(param.thisObject, "mBrighteningLightDebounceConfig", 2000L);
                             XposedHelpers.setLongField(param.thisObject, "mDarkeningLightDebounceConfig", 4000L);
-                            XposedHelpers.setLongField(param.thisObject, "mBrighteningLightDebounceConfigIdle", 2000L);
-                            XposedHelpers.setLongField(param.thisObject, "mDarkeningLightDebounceConfigIdle", 4000L);
                             XposedBridge.log("dash-evox-patch: Patched AutomaticBrightnessController debounce windows (2000ms / 4000ms)");
                         } catch (Throwable t) {
                             XposedBridge.log("dash-evox-patch: Failed to set debounce fields: " + t);
@@ -128,13 +126,13 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         try {
-                            float slowDecrease = XposedHelpers.getFloatField(param.thisObject, "mBrightnessRampRateSlowDecrease");
+                            float slowDecrease = XposedHelpers.getFloatField(param.thisObject, "mBrightnessRampSlowDecrease");
                             float factor = 2000.0f / 3946.0f;
                             float newSlow = slowDecrease * factor;
-                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowDecrease", newSlow);
-                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowIncrease", newSlow);
-                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowDecreaseIdle", newSlow);
-                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampRateSlowIncreaseIdle", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampSlowDecrease", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampSlowIncrease", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampSlowDecreaseIdle", newSlow);
+                            XposedHelpers.setFloatField(param.thisObject, "mBrightnessRampSlowIncreaseIdle", newSlow);
                             XposedBridge.log("dash-evox-patch: Patched DisplayPowerController slow ramp rate: " + slowDecrease + " -> " + newSlow);
                         } catch (Throwable t) {
                             XposedBridge.log("dash-evox-patch: Failed to patch brightness ramp rates: " + t);
@@ -483,9 +481,17 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     }
 
 
+    private static void runHook(String name, Runnable hook) {
+        try {
+            hook.run();
+        } catch (Throwable throwable) {
+            XposedBridge.log("dash-evox-patch: " + name + " failed: " + throwable);
+        }
+    }
+
     private static void hookNotificationDismissHaptics(ClassLoader classLoader) {
-        Class<?> factoryClass = XposedHelpers.findClass(
-                "com.android.systemui.statusbar.notification.stack.MagneticNotificationRowManagerImpl_Factory",
+        Class<?> managerClass = XposedHelpers.findClass(
+                "com.android.systemui.statusbar.notification.stack.MagneticNotificationRowManagerImpl",
                 classLoader
         );
         Class<?> emptyPlayerClass = XposedHelpers.findClass(
@@ -493,18 +499,13 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                 classLoader
         );
 
-        XposedHelpers.findAndHookMethod(
-                factoryClass,
-                "get",
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        Object manager = param.getResult();
-                        Object emptyPlayer = XposedHelpers.newInstance(emptyPlayerClass);
-                        XposedHelpers.setObjectField(manager, "msdlPlayer", emptyPlayer);
-                    }
-                }
-        );
+        XposedBridge.hookAllConstructors(managerClass, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                Object emptyPlayer = XposedHelpers.newInstance(emptyPlayerClass);
+                XposedHelpers.setObjectField(param.thisObject, "msdlPlayer", emptyPlayer);
+            }
+        });
     }
 
     private static int id(Resources resources, String name) {
