@@ -5,11 +5,14 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 ## Features
 
 - Persistent Quick Settings date with calendar shortcut
-- Correct expanded header insets
-- No notification-dismiss vibration
 - Brightness slider uses the gamma curve instead of the ROM's linear curve
 - Smooth auto-brightness response (absorbs raw ALS jitter via widened debounce windows and slowed automatic ramp rate)
 - HyperCharge, fast-charge, or normal charging status, live input power, and a charge-time estimate on the lock screen
+- MiSound speaker tuning. The ROM turns it off and ships the DSP config without the stock MiSound library; the module puts that library and config back
+- Speaker volume uses 30 steps, and the middle of the slider is no longer near −23 dB
+- Circle to Search from a navigation-pill hold. The ROM omits the feature the launcher checks before starting it
+- Last rotation choice stays across reboot. Auto-rotate and the locked angle are restored; the module does not force a lock
+- No haptic buzz while swiping a notification or dragging the volume slider; the brightness slider keeps its feedback
 
 ## Requirements
 

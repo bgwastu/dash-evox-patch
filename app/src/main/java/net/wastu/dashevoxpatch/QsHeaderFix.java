@@ -1,14 +1,20 @@
 package net.wastu.dashevoxpatch;
 
+import android.content.ContentResolver;
 import android.content.Context;
+import android.database.ContentObserver;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
-import android.content.res.Resources;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.lang.ref.WeakReference;
 import java.util.Locale;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
@@ -21,9 +27,9 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     private static final String SYSTEM_FRAMEWORK = "android";
     private static final String SYSTEM_UI = "com.android.systemui";
     private static final String CHARGER_CLASS_STATE = "dash_evox_charger_class";
+    private static final String ROTATION_STATE = "dash_evox_rotation_state";
+    private static final long ROTATION_SAVE_GRACE_MS = 35_000L;
     private static volatile android.content.ContentResolver contentResolver;
-    private static final int START = 6;
-    private static final int END = 7;
 
     private static final long CHARGE_ESTIMATE_STABILIZE_MS = 30_000L;
     private static volatile boolean wiredCharging;
@@ -49,6 +55,8 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                             try {
                                 ClassLoader classLoader = param.thisObject.getClass().getClassLoader();
                                 hookDisplayBrightnessSmoothing(classLoader);
+                                hookContextualSearch(classLoader);
+                                runHook("super volume", () -> SuperVolume.hook(classLoader));
                                 XposedBridge.log("dash-evox-patch: Installed display brightness smoothing hooks into system_server");
                             } catch (Throwable t) {
                                 XposedBridge.log("dash-evox-patch: Failed to install brightness hooks: " + t);
@@ -65,6 +73,8 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam loadPackageParam) {
         if (SYSTEM_FRAMEWORK.equals(loadPackageParam.packageName)) {
             hookDisplayBrightnessSmoothing(loadPackageParam.classLoader);
+            hookContextualSearch(loadPackageParam.classLoader);
+            runHook("super volume", () -> SuperVolume.hook(loadPackageParam.classLoader));
             return;
         }
 
@@ -88,14 +98,42 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                         Context context = (Context) param.args[0];
                         contentResolver = context.getContentResolver();
                         ClassLoader classLoader = context.getClassLoader();
+                        runHook("rotation", () -> hookRotationPersistence(context));
                         runHook("quick settings date", () -> hookVariableDate(classLoader));
-                        runHook("header insets", () -> hookHeaderInsets(classLoader));
-                        runHook("notification haptics", () -> hookNotificationDismissHaptics(classLoader));
+                        runHook("calendar shortcut", () -> hookCalendarShortcut(classLoader));
+                        runHook("header edges", () -> hookHeaderEdges(classLoader));
+                        runHook("swipe haptics", () -> hookSwipeHaptics(classLoader));
                         runHook("hypercharge", () -> hookHyperCharge(classLoader));
                         XposedBridge.log("dash-evox-patch: SystemUI hooks installed");
                     }
                 }
         );
+    }
+
+    private static final String CONTEXTUAL_SEARCH_FEATURE = "android.software.contextualsearch";
+
+    private void hookContextualSearch(ClassLoader classLoader) {
+        XC_MethodHook hook = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                if (CONTEXTUAL_SEARCH_FEATURE.equals(param.args[0])) {
+                    param.setResult(true);
+                }
+            }
+        };
+        for (String className : new String[] {
+                "com.android.server.pm.PackageManagerService",
+                "com.android.server.pm.IPackageManagerBase"
+        }) {
+            try {
+                XposedHelpers.findAndHookMethod(
+                        className, classLoader, "hasSystemFeature", String.class, int.class, hook);
+                XposedBridge.log("dash-evox-patch: Circle to Search feature hook installed on " + className);
+            } catch (Throwable t) {
+                XposedBridge.log("dash-evox-patch: Circle to Search feature hook failed on "
+                        + className + ": " + t);
+            }
+        }
     }
 
     private void hookDisplayBrightnessSmoothing(ClassLoader classLoader) {
@@ -187,31 +225,10 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         );
     }
 
-    private static void hookHeaderInsets(ClassLoader classLoader) {
+    private static void hookCalendarShortcut(ClassLoader classLoader) {
         Class<?> controllerClass = XposedHelpers.findClass(
                 "com.android.systemui.shade.ShadeHeaderController",
                 classLoader
-        );
-        Class<?> motionLayoutClass = XposedHelpers.findClass(
-                "androidx.constraintlayout.motion.widget.MotionLayout",
-                classLoader
-        );
-
-        XposedHelpers.findAndHookMethod(
-                controllerClass,
-                "updateConstraintsForInsets",
-                motionLayoutClass,
-                android.view.WindowInsets.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam param) {
-                        try {
-                            alignExpandedHeader(param.thisObject);
-                        } catch (Throwable throwable) {
-                            XposedBridge.log("EvolutionXQsFix: failed to align header: " + throwable);
-                        }
-                    }
-                }
         );
 
         XposedHelpers.findAndHookMethod(
@@ -239,34 +256,6 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                     }
                 }
         );
-    }
-
-    private static void alignExpandedHeader(Object controller) {
-        View header = (View) XposedHelpers.getObjectField(controller, "header");
-        Context context = header.getContext();
-        Resources resources = context.getResources();
-
-        int qsState = id(resources, "qs_header_constraint");
-        int qqsState = id(resources, "qqs_header_constraint");
-        int clock = id(resources, "clock");
-        int date = id(resources, "date");
-        int systemIcons = id(resources, "shade_header_system_icons");
-        int beginGuide = id(resources, "begin_guide");
-        int endGuide = id(resources, "end_guide");
-        int minimumDateWidth = Math.round(90 * resources.getDisplayMetrics().density);
-
-        Object qqsConstraints = XposedHelpers.callMethod(header, "getConstraintSet", qqsState);
-        XposedHelpers.callMethod(qqsConstraints, "clear", date, END);
-        XposedHelpers.callMethod(qqsConstraints, "constrainWidth", date, -2);
-        XposedHelpers.callMethod(qqsConstraints, "constrainMinWidth", date, minimumDateWidth);
-        XposedHelpers.callMethod(header, "updateState", qqsState, qqsConstraints);
-
-        Object qsConstraints = XposedHelpers.callMethod(header, "getConstraintSet", qsState);
-        XposedHelpers.callMethod(qsConstraints, "connect", clock, START, beginGuide, START);
-        XposedHelpers.callMethod(qsConstraints, "connect", date, START, beginGuide, START);
-        XposedHelpers.callMethod(qsConstraints, "connect", systemIcons, END, endGuide, END);
-        XposedHelpers.callMethod(header, "updateState", qsState, qsConstraints);
-        header.requestLayout();
     }
 
     private static void hookHyperCharge(ClassLoader classLoader) {
@@ -481,39 +470,284 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
     }
 
 
+    private static void hookRotationPersistence(Context context) {
+        ContentResolver resolver = context.getContentResolver();
+        int[] state = parseRotationState(Settings.Secure.getString(resolver, ROTATION_STATE));
+        if (state != null) {
+            Settings.System.putInt(resolver, Settings.System.USER_ROTATION, state[1]);
+            Settings.System.putInt(resolver, Settings.System.ACCELEROMETER_ROTATION, state[0]);
+        }
+
+        long saveAfter = SystemClock.elapsedRealtime() + ROTATION_SAVE_GRACE_MS;
+        ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
+            @Override
+            public void onChange(boolean selfChange) {
+                if (SystemClock.elapsedRealtime() < saveAfter) {
+                    return;
+                }
+                saveRotationState(resolver);
+            }
+        };
+        resolver.registerContentObserver(
+                Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
+                false,
+                observer
+        );
+        resolver.registerContentObserver(
+                Settings.System.getUriFor(Settings.System.USER_ROTATION),
+                false,
+                observer
+        );
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (parseRotationState(Settings.Secure.getString(resolver, ROTATION_STATE)) == null) {
+                saveRotationState(resolver);
+            }
+        }, ROTATION_SAVE_GRACE_MS);
+        XposedBridge.log("dash-evox-patch: rotation persistence installed");
+    }
+
+    private static int[] parseRotationState(String saved) {
+        if (saved == null || !saved.matches("[01]:[0-3]")) {
+            return null;
+        }
+        return new int[]{saved.charAt(0) - '0', saved.charAt(2) - '0'};
+    }
+
+    private static void saveRotationState(ContentResolver resolver) {
+        int accelerometerRotation = Settings.System.getInt(
+                resolver,
+                Settings.System.ACCELEROMETER_ROTATION,
+                0
+        );
+        int userRotation = Settings.System.getInt(
+                resolver,
+                Settings.System.USER_ROTATION,
+                0
+        );
+        if ((accelerometerRotation == 0 || accelerometerRotation == 1)
+                && userRotation >= 0 && userRotation <= 3) {
+            Settings.Secure.putString(
+                    resolver,
+                    ROTATION_STATE,
+                    accelerometerRotation + ":" + userRotation
+            );
+        }
+    }
+
+    private static final int START = 6;
+    private static final int END = 7;
+    // On-screen edges of the collapsed status bar content, measured from its live layout.
+    private static volatile int statusBarContentStart = -1;
+    private static volatile int statusBarContentEnd = -1;
+    private static volatile int statusBarWidth = -1;
+    private static volatile WeakReference<Object> headerController = new WeakReference<>(null);
+
+    /**
+     * Gives the shade header the same side padding as the collapsed status bar. SystemUI only
+     * offsets the header guides by the rounded-corner inset and pins the expanded state to the
+     * parent edges, so the clock and battery sit closer to the screen edge than in the status bar.
+     */
+    private static void hookHeaderEdges(ClassLoader classLoader) {
+        Class<?> controllerClass = XposedHelpers.findClass(
+                "com.android.systemui.shade.ShadeHeaderController",
+                classLoader
+        );
+        Class<?> motionLayoutClass = XposedHelpers.findClass(
+                "androidx.constraintlayout.motion.widget.MotionLayout",
+                classLoader
+        );
+
+        XposedHelpers.findAndHookMethod(
+                controllerClass,
+                "updateConstraintsForInsets",
+                motionLayoutClass,
+                WindowInsets.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        headerController = new WeakReference<>(param.thisObject);
+                        try {
+                            alignHeaderEdges((ViewGroup) param.args[0]);
+                        } catch (Throwable throwable) {
+                            XposedBridge.log("dash-evox-patch: failed to align header edges: " + throwable);
+                        }
+                    }
+                }
+        );
+
+        XposedBridge.hookAllConstructors(
+                XposedHelpers.findClass("com.android.systemui.statusbar.phone.PhoneStatusBarView", classLoader),
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        View statusBar = (View) param.thisObject;
+                        statusBar.addOnLayoutChangeListener((view, l, t, r, b, ol, ot, or, ob) ->
+                                view.post(() -> measureStatusBar(view)));
+                    }
+                }
+        );
+    }
+
+    private static void measureStatusBar(View statusBar) {
+        if (statusBar.getDisplay() == null
+                || statusBar.getDisplay().getDisplayId() != android.view.Display.DEFAULT_DISPLAY) {
+            return;
+        }
+        android.content.res.Resources resources = statusBar.getResources();
+        View contents = statusBar.findViewById(id(resources, "status_bar_contents"));
+        View systemIcons = statusBar.findViewById(id(resources, "system_icons"));
+        View battery = systemIcons == null ? null : findBattery(systemIcons);
+        // The collapsed bar hides while the shade is open; only trust a fully visible layout.
+        if (contents == null || contents.getWidth() == 0 || battery == null || !battery.isShown()
+                || battery.getWidth() == 0) {
+            return;
+        }
+        int[] location = new int[2];
+        contents.getLocationOnScreen(location);
+        int start = location[0] + contents.getPaddingStart();
+        battery.getLocationOnScreen(location);
+        int end = location[0] + battery.getWidth() - battery.getPaddingEnd();
+
+        int width = statusBar.getWidth();
+        if (start == statusBarContentStart && end == statusBarContentEnd && width == statusBarWidth) {
+            return;
+        }
+        statusBarContentStart = start;
+        statusBarContentEnd = end;
+        statusBarWidth = width;
+
+        Object controller = headerController.get();
+        if (controller == null) {
+            return;
+        }
+        Object header = XposedHelpers.getObjectField(controller, "header");
+        Object insets = XposedHelpers.getObjectField(controller, "lastInsets");
+        if (header != null && insets != null) {
+            XposedHelpers.callMethod(controller, "updateConstraintsForInsets", header, insets);
+        }
+    }
+
+    private static View findBattery(View view) {
+        if (view.getId() != View.NO_ID) {
+            try {
+                if (view.getResources().getResourceEntryName(view.getId()).contains("battery")) {
+                    return view;
+                }
+            } catch (android.content.res.Resources.NotFoundException ignored) {
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = group.getChildCount() - 1; i >= 0; i--) {
+                View battery = findBattery(group.getChildAt(i));
+                if (battery != null) {
+                    return battery;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static void alignHeaderEdges(ViewGroup header) {
+        if (header.getLayoutDirection() == View.LAYOUT_DIRECTION_RTL || statusBarContentStart < 0 || header.getWidth() == 0
+                || header.getWidth() != statusBarWidth) {
+            return;
+        }
+        android.content.res.Resources resources = header.getResources();
+        int[] location = new int[2];
+        header.getLocationOnScreen(location);
+        int headerLeft = location[0];
+        int headerRight = headerLeft + header.getWidth();
+
+        // The header battery can sit inside the system icons container with its own end inset.
+        int iconsEndInset = 0;
+        View systemIcons = header.findViewById(id(resources, "shade_header_system_icons"));
+        View battery = systemIcons == null ? null : findBattery(systemIcons);
+        if (battery != null && battery.getWidth() > 0 && systemIcons.getWidth() > 0) {
+            int[] batteryLocation = new int[2];
+            battery.getLocationOnScreen(batteryLocation);
+            systemIcons.getLocationOnScreen(location);
+            iconsEndInset = (location[0] + systemIcons.getWidth())
+                    - (batteryLocation[0] + battery.getWidth() - battery.getPaddingEnd());
+        }
+
+        int guideBegin = Math.max(statusBarContentStart - headerLeft - header.getPaddingLeft(), 0);
+        int guideEnd = Math.max(
+                headerRight - statusBarContentEnd - header.getPaddingRight() - iconsEndInset, 0);
+
+        int clock = id(resources, "clock");
+        int date = id(resources, "date");
+        int beginGuide = id(resources, "begin_guide");
+        int endGuide = id(resources, "end_guide");
+        int privacy = id(resources, "privacy_container");
+        for (String state : new String[] {"qqs_header_constraint", "qs_header_constraint"}) {
+            int stateId = id(resources, state);
+            Object constraints = XposedHelpers.callMethod(header, "getConstraintSet", stateId);
+            XposedHelpers.callMethod(constraints, "setGuidelineBegin", beginGuide, guideBegin);
+            XposedHelpers.callMethod(constraints, "setGuidelineEnd", endGuide, guideEnd);
+            if (state.startsWith("qs_")) {
+                XposedHelpers.callMethod(constraints, "connect", clock, START, beginGuide, START);
+                XposedHelpers.callMethod(constraints, "connect", date, START, beginGuide, START);
+                XposedHelpers.callMethod(constraints, "connect", id(resources, "shade_header_system_icons"), END, endGuide, END);
+                XposedHelpers.callMethod(constraints, "connect", privacy, END, endGuide, END);
+            }
+            XposedHelpers.callMethod(header, "updateState", stateId, constraints);
+        }
+        header.requestLayout();
+    }
+
+    /**
+     * Silences the haptics played while swiping a notification (the magnetic pull and the
+     * dismiss threshold) and while dragging a volume slider. Other sliders, such as brightness,
+     * keep theirs.
+     */
+    private static void hookSwipeHaptics(ClassLoader classLoader) {
+        Class<?> emptyPlayerClass = XposedHelpers.findClass(
+                "com.google.android.msdl.domain.EmptyMSDLPlayer", classLoader);
+
+        XposedBridge.hookAllConstructors(
+                XposedHelpers.findClass(
+                        "com.android.systemui.statusbar.notification.stack.MagneticNotificationRowManagerImpl",
+                        classLoader),
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        XposedHelpers.setObjectField(param.thisObject, "msdlPlayer",
+                                XposedHelpers.newInstance(emptyPlayerClass));
+                    }
+                });
+
+        // The volume and brightness sliders share this provider; only the caller tells them apart.
+        XposedBridge.hookAllConstructors(
+                XposedHelpers.findClass(
+                        "com.android.systemui.haptics.slider.SliderHapticFeedbackProvider",
+                        classLoader),
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        for (StackTraceElement frame : new Throwable().getStackTrace()) {
+                            if (frame.getClassName().startsWith("com.android.systemui.volume.")) {
+                                XposedHelpers.setObjectField(param.thisObject, "msdlPlayer",
+                                        XposedHelpers.newInstance(emptyPlayerClass));
+                                XposedBridge.log("dash-evox-patch: muted volume slider haptics for "
+                                        + frame.getClassName());
+                                return;
+                            }
+                        }
+                    }
+                });
+    }
+
+    private static int id(android.content.res.Resources resources, String name) {
+        return resources.getIdentifier(name, "id", SYSTEM_UI);
+    }
+
     private static void runHook(String name, Runnable hook) {
         try {
             hook.run();
         } catch (Throwable throwable) {
             XposedBridge.log("dash-evox-patch: " + name + " failed: " + throwable);
         }
-    }
-
-    private static void hookNotificationDismissHaptics(ClassLoader classLoader) {
-        Class<?> managerClass = XposedHelpers.findClass(
-                "com.android.systemui.statusbar.notification.stack.MagneticNotificationRowManagerImpl",
-                classLoader
-        );
-        Class<?> emptyPlayerClass = XposedHelpers.findClass(
-                "com.google.android.msdl.domain.EmptyMSDLPlayer",
-                classLoader
-        );
-
-        XposedBridge.hookAllConstructors(managerClass, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                Object emptyPlayer = XposedHelpers.newInstance(emptyPlayerClass);
-                XposedHelpers.setObjectField(param.thisObject, "msdlPlayer", emptyPlayer);
-            }
-        });
-    }
-
-    private static int id(Resources resources, String name) {
-        int value = resources.getIdentifier(name, "id", SYSTEM_UI);
-        if (value == 0) {
-            throw new Resources.NotFoundException(name);
-        }
-        return value;
     }
 
 }

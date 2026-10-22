@@ -5,7 +5,7 @@
         android:label="dash-evox-patch"
         android:theme="@style/AppTheme">
         <meta-data android:name="xposedmodule" android:value="true" />
-        <meta-data android:name="xposeddescription" android:value="Patches EvolutionX Quick Settings header, notification dismissal haptics, lock-screen charging status, and auto-brightness." />
+        <meta-data android:name="xposeddescription" android:value="Patches EvolutionX Quick Settings date, lock-screen charging status, auto-brightness, rotation, swipe haptics, and Circle to Search." />
         <meta-data android:name="xposedminversion" android:value="93" />
         <meta-data android:name="xposedscope" android:value="android;com.android.systemui" />
     </application>

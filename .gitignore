@@ -5,3 +5,6 @@ local.properties
 *.apk
 .idea/
 *.iml
+/module/misound/
+native/vendorext/gen/
+native/vendorext/out/
