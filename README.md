@@ -13,6 +13,7 @@ Fixes for EvolutionX on POCO X8 Pro Max (`dash`).
 - Circle to Search from a navigation-pill hold. The ROM omits the feature the launcher checks before starting it
 - Last rotation choice stays across reboot. Auto-rotate and the locked angle are restored; the module does not force a lock
 - No haptic buzz while swiping a notification or dragging the volume slider; the brightness slider keeps its feedback
+- The lock screen "swipe up" hint sits below the fingerprint icon instead of under it. The dash overlay lifts the hint into the sensor circle; this keeps a 12dp clearance wherever the Android version places either view
 
 ## Requirements
 

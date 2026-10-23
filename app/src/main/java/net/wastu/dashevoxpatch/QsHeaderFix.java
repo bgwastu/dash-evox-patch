@@ -16,6 +16,8 @@ import java.io.File;
 import java.io.FileReader;
 import java.lang.ref.WeakReference;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.List;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
 import de.robv.android.xposed.XC_MethodHook;
@@ -103,6 +105,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                         runHook("calendar shortcut", () -> hookCalendarShortcut(classLoader));
                         runHook("header edges", () -> hookHeaderEdges(classLoader));
                         runHook("swipe haptics", () -> hookSwipeHaptics(classLoader));
+                        runHook("swipe up hint", () -> hookSwipeUpHint(classLoader));
                         runHook("hypercharge", () -> hookHyperCharge(classLoader));
                         XposedBridge.log("dash-evox-patch: SystemUI hooks installed");
                     }
@@ -738,6 +741,186 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                 });
     }
 
+
+    /**
+    /**
+     * Keeps the lock screen "swipe up" hint clear of the udfps icon. The dash overlay lifts the
+     * indication area with a 130dp bottom margin, which parks the hint under the sensor circle.
+     * Both views get a shared layout listener that runs synchronously inside the layout pass, so
+     * the hint is already below the icon on the first rendered frame and never flashes.
+     */
+    private static void hookSwipeUpHint(ClassLoader classLoader) {
+        View.OnLayoutChangeListener relay = (v, l, t, r, b, ol, ot, or, ob) -> {
+            View area = v.getRootView().findViewById(id(v.getResources(), "keyguard_indication_area"));
+            if (area != null) {
+                placeSwipeUpHintBelowIcon(area);
+            }
+        };
+        XC_MethodHook attach = new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) {
+                attachSwipeUpHintRelay((View) param.thisObject, relay);
+            }
+        };
+        for (String className : new String[] {
+                "com.android.systemui.keyguard.ui.view.KeyguardIndicationArea",
+                "com.android.systemui.keyguard.ui.view.DeviceEntryIconView"
+        }) {
+            XposedBridge.hookAllConstructors(
+                    XposedHelpers.findClass(className, classLoader), attach);
+        }
+        try {
+            XposedBridge.hookAllMethods(
+                    XposedHelpers.findClass(
+                            "com.android.systemui.statusbar.phone.KeyguardIndicationTextView",
+                            classLoader),
+                    "setText",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            Object text = param.args.length > 0 ? param.args[0] : null;
+                            View view = (View) param.thisObject;
+                            Object parent = view.getParent();
+                            if (text instanceof CharSequence
+                                    && ((CharSequence) text).length() > 0
+                                    && view instanceof android.widget.TextView) {
+                                // Text changes do not always relayout the area, so rerun the
+                                // placement one frame after the text settles.
+                                view.postDelayed(() -> {
+                                    Object areaView = view.getParent();
+                                    if (areaView instanceof View) {
+                                        placeSwipeUpHintBelowIcon((View) areaView);
+                                    }
+                                }, 20);
+                            }
+                        }
+                    });
+        } catch (Throwable throwable) {
+            XposedBridge.log("dash-evox-patch: swipe text hint hook failed: " + throwable);
+        }
+        // Views may already exist before our constructor hooks attach, so also latch on whenever
+        // the keyguard sections bind their views. Sections return their root to bindData.
+        for (String className : new String[] {
+                "com.android.systemui.keyguard.ui.view.layout.sections.DefaultIndicationAreaSection",
+                "com.android.systemui.keyguard.ui.view.layout.sections.DefaultDeviceEntrySection"
+        }) {
+            try {
+                XposedBridge.hookAllMethods(
+                        XposedHelpers.findClass(className, classLoader),
+                        "bindData",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                ViewGroup root = (ViewGroup) param.args[0];
+                                attachSwipeUpHintRelay(
+                                        root.findViewById(id(root.getResources(), "keyguard_indication_area")),
+                                        relay);
+                                attachSwipeUpHintRelay(
+                                        root.findViewById(id(root.getResources(), "device_entry_icon_view")),
+                                        relay);
+                            }
+                        });
+            } catch (Throwable throwable) {
+                XposedBridge.log("dash-evox-patch: swipe up hint section hook failed on "
+                        + className + ": " + throwable);
+            }
+        }
+    }
+
+    private static void attachSwipeUpHintRelay(View view, View.OnLayoutChangeListener relay) {
+        if (view == null) {
+            return;
+        }
+        if (view.getTag() == null) {
+            view.setTag(relay);
+            view.addOnLayoutChangeListener(relay);
+            XposedBridge.log("dash-evox-patch: swipe-up hint relay attached to "
+                    + Integer.toHexString(view.getId()) + ")");
+        }
+    }
+
+
+    private static void placeSwipeUpHintBelowIcon(View area) {
+        try {
+            if (area.getDisplay() == null
+                    || area.getDisplay().getDisplayId() != android.view.Display.DEFAULT_DISPLAY) {
+                return;
+            }
+            View icon = area.getRootView().findViewById(id(area.getResources(), "device_entry_icon_view"));
+            if (icon == null || !icon.isShown() || icon.getHeight() == 0) {
+                return;
+            }
+            if (icon.getTop() <= 0 || icon.getBottom() <= area.getTop()) {
+                // The icon has not been laid out yet this traversal; a later listener reruns this.
+                return;
+            }
+            List<View> areas = new ArrayList<>();
+            collectViewsById(area.getRootView(),
+                    id(area.getResources(), "keyguard_indication_area"), areas);
+            int[] location = new int[2];
+            icon.getLocationOnScreen(location);
+            int iconBottom = location[1] + icon.getHeight();
+            // More than one KeyguardIndicationArea can be attached; move the one holding the text.
+            View target = null;
+            int textTop = -1;
+            int textBottom = -1;
+            for (View candidate : areas) {
+                candidate.setTranslationY(0);
+                for (int i = 0; i < ((ViewGroup) candidate).getChildCount(); i++) {
+                    View child = ((ViewGroup) candidate).getChildAt(i);
+                    if (child.getVisibility() != View.VISIBLE
+                            || !(child instanceof android.widget.TextView)) {
+                        continue;
+                    }
+                    if (((android.widget.TextView) child).getText().length() == 0 || !child.isShown()) {
+                        continue;
+                    }
+                    child.getLocationOnScreen(location);
+                    int top = location[1];
+                    int bottom = top + child.getHeight();
+                    textTop = textTop < 0 ? top : Math.min(textTop, top);
+                    textBottom = textBottom < 0 ? bottom : Math.max(textBottom, bottom);
+                }
+                if (textTop >= 0) {
+                    target = candidate;
+                    break;
+                }
+            }
+            if (target == null || textTop >= iconBottom) {
+                return;
+            }
+            int gap = Math.round(12 * target.getResources().getDisplayMetrics().density);
+            float translation = iconBottom + gap - textTop;
+            // Never push the hint into the navigation bar.
+            android.view.WindowInsets insets = target.getRootWindowInsets();
+            if (insets != null) {
+                int navBottom = insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom;
+                int maxHeight = target.getResources().getDisplayMetrics().heightPixels - navBottom;
+                if (textBottom + translation > maxHeight) {
+                    translation = maxHeight - textBottom;
+                }
+            }
+            if (translation > 0) {
+                target.setTranslationY(translation);
+                XposedBridge.log("dash-evox-patch: moved swipe-up hint down by " + Math.round(translation)
+                        + "px (text " + textTop + "-" + textBottom + ", icon bottom " + iconBottom + ")");
+            }
+        } catch (Throwable throwable) {
+            XposedBridge.log("dash-evox-patch: swipe-up hint placement failed: " + throwable);
+        }
+    }
+
+    private static void collectViewsById(View view, int viewId, List<View> out) {
+        if (view.getId() == viewId) {
+            out.add(view);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = group.getChildCount() - 1; i >= 0; i--) {
+                collectViewsById(group.getChildAt(i), viewId, out);
+            }
+        }
+    }
     private static int id(android.content.res.Resources resources, String name) {
         return resources.getIdentifier(name, "id", SYSTEM_UI);
     }
