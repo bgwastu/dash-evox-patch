@@ -481,26 +481,8 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
             Settings.System.putInt(resolver, Settings.System.ACCELEROMETER_ROTATION, state[0]);
         }
 
-        long saveAfter = SystemClock.elapsedRealtime() + ROTATION_SAVE_GRACE_MS;
-        ContentObserver observer = new ContentObserver(new Handler(Looper.getMainLooper())) {
-            @Override
-            public void onChange(boolean selfChange) {
-                if (SystemClock.elapsedRealtime() < saveAfter) {
-                    return;
-                }
-                saveRotationState(resolver);
-            }
-        };
-        resolver.registerContentObserver(
-                Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
-                false,
-                observer
-        );
-        resolver.registerContentObserver(
-                Settings.System.getUriFor(Settings.System.USER_ROTATION),
-                false,
-                observer
-        );
+        // Only restore here. Saving changes is left to module/rotation-state.sh, which can see
+        // who wrote the setting and ignores adb automation (monkey, uiautomator).
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             if (parseRotationState(Settings.Secure.getString(resolver, ROTATION_STATE)) == null) {
                 saveRotationState(resolver);

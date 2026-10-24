@@ -74,6 +74,21 @@ live_rotation_matches_saved() {
     [ "$(read_system_setting user_rotation)" = "$SAVED_USER_ROTATION" ]
 }
 
+# True when the newest WindowManager rotation-lock entry, written within the last few
+# seconds, came from adb automation rather than a UI path.
+rotation_change_is_automation() {
+  entry=$(dumpsys window displays 2>/dev/null | sed -n '/RotationLockHistory/,/^ *$/p' \
+    | grep 'caller=' | tail -1)
+  case "$entry" in
+    *MonkeyRotationEvent*|*MonkeyRotationEven*|*UiAutomationConnection*) ;;
+    *) return 1 ;;
+  esac
+  stamp=$(echo "$entry" | sed -n 's/^ *\([0-9][0-9]-[0-9][0-9] [0-9:]*\)\..*/\1/p')
+  entry_epoch=$(date -d "$(date +%Y)-$stamp" +%s 2>/dev/null) || return 0
+  [ -n "$entry_epoch" ] || return 0
+  [ $(( $(date +%s) - entry_epoch )) -le 15 ]
+}
+
 watch_rotation_state() {
   i=0
   while [ "$i" -lt 60 ]; do
@@ -115,11 +130,18 @@ watch_rotation_state() {
     if live_rotation_matches_saved; then
       continue
     fi
+    if rotation_change_is_automation; then
+      # adb tooling (monkey, uiautomator) thaws rotation as a side effect. That is not the
+      # user's choice, so put the saved state back instead of remembering it.
+      log_rotation_state "before-automation-restore"
+      restore_loaded_rotation_state
+      log_rotation_state "after-automation-restore"
+      continue
+    fi
     previous_accelerometer=$SAVED_ACCELEROMETER_ROTATION
     save_live_rotation_state || continue
     log_rotation_state user-change
-    # Auto-rotate sometimes turns itself on. Record WindowManager's caller history so the
-    # writer can be named; it only keeps the last few entries.
+    # Keep the writer history for diagnosing unexpected auto-rotate changes.
     if [ "$previous_accelerometer" = "0" ] && [ "$SAVED_ACCELEROMETER_ROTATION" = "1" ]; then
       dumpsys window displays 2>/dev/null | sed -n '/RotationLockHistory/,/^ *$/p' \
         >> "$ROTATION_LOG_FILE"
