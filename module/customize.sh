@@ -87,6 +87,7 @@ set_perm "$MODPATH/service.sh" 0 0 0755
 set_perm "$MODPATH/charge-state.sh" 0 0 0755
 set_perm "$MODPATH/misound-mount.sh" 0 0 0755
 set_perm "$MODPATH/rotation-state.sh" 0 0 0755
+set_perm "$MODPATH/vendorext-mount.sh" 0 0 0755
 set_perm "$APK" 0 0 0644
 
 ui_print "- Enable dash-evox-patch for System UI in LSPosed, then reboot"

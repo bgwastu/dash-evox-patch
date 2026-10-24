@@ -34,6 +34,6 @@ fi
 # so no vendor key reaches the HAL. libdashvendorext.so replaces that parser's logic and
 # the system_server hook drives the boost.
 "$RESETPROP" -n ro.vendor.audio.supervolume.support true
-if "$MODDIR/vendorext-mount.sh"; then
+if sh "$MODDIR/vendorext-mount.sh"; then
   "$RESETPROP" -n ro.audio.ihaladaptervendorextension_libname libdashvendorext.so
 fi

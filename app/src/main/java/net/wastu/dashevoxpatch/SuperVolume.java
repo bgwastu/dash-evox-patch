@@ -56,6 +56,7 @@ final class SuperVolume {
     private final AudioManager audioManager;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean audioFlingerVerified;
+    private int probeRetries;
     private int level;
     private boolean musicMarkedActive;
     private int markedOutput;
@@ -115,12 +116,23 @@ final class SuperVolume {
     }
 
     private void start() {
-        audioFlingerVerified = probeAudioFlinger();
-        if (!audioFlingerVerified) {
-            XposedBridge.log(TAG + "IAudioFlingerService codes did not verify; disabled");
+        if (audioFlingerVerified) {
+            return;
+        }
+        if (!probeAudioFlinger()) {
+            if (probeRetries++ == 0) {
+                XposedBridge.log(TAG + "IAudioFlingerService did not verify; will retry");
+            }
+            if (probeRetries <= 6) {
+                handler.postDelayed(this::start, 15_000L);
+                return;
+            }
+            XposedBridge.log(TAG + "IAudioFlingerService did not verify after "
+                    + probeRetries + " probes; disabled");
             instance = null;
             return;
         }
+        audioFlingerVerified = true;
         audioManager.registerAudioPlaybackCallback(new AudioManager.AudioPlaybackCallback() {
             @Override
             public void onPlaybackConfigChanged(List<AudioPlaybackConfiguration> configs) {
@@ -153,6 +165,9 @@ final class SuperVolume {
 
     /** Returns true when the volume key was consumed by a boost step. */
     private boolean onAdjust(int streamType, int direction) {
+        if (!audioFlingerVerified) {
+            return false;
+        }
         if (streamType != STREAM_MUSIC || !isAtSpeakerMax()) {
             return false;
         }
