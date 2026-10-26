@@ -187,9 +187,9 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         hookBrightnessFloor(classLoader);
     }
 
-    // The panel tints red below roughly this level (about 6 nits on dash). Raising the range
+    // The panel tints red below roughly this level (about 10 nits on dash). Raising the range
     // minimum moves the slider's bottom end up and clamps auto-brightness to the same floor.
-    private static final float BRIGHTNESS_FLOOR = 0.0034f;
+    private static final float BRIGHTNESS_FLOOR = 0.0067f;
 
     private void hookBrightnessFloor(ClassLoader classLoader) {
         try {
