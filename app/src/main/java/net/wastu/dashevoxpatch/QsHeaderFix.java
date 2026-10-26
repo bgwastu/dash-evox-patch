@@ -184,33 +184,6 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         } catch (Throwable t) {
             XposedBridge.log("dash-evox-patch: Failed to hook display brightness smoothing: " + t);
         }
-        hookBrightnessFloor(classLoader);
-    }
-
-    // The panel tints red below roughly this level (about 10 nits on dash). Raising the range
-    // minimum moves the slider's bottom end up and clamps auto-brightness to the same floor.
-    private static final float BRIGHTNESS_FLOOR = 0.0067f;
-
-    private void hookBrightnessFloor(ClassLoader classLoader) {
-        try {
-            Class<?> rangeClass = XposedHelpers.findClassIfExists(
-                    "com.android.server.display.BrightnessRangeController", classLoader);
-            if (rangeClass == null) {
-                return;
-            }
-            XposedBridge.hookAllMethods(rangeClass, "getCurrentBrightnessMin", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    Object result = param.getResult();
-                    if (result instanceof Float && (Float) result < BRIGHTNESS_FLOOR) {
-                        param.setResult(BRIGHTNESS_FLOOR);
-                    }
-                }
-            });
-            XposedBridge.log("dash-evox-patch: Brightness floor hook installed (" + BRIGHTNESS_FLOOR + ")");
-        } catch (Throwable t) {
-            XposedBridge.log("dash-evox-patch: Failed to hook brightness floor: " + t);
-        }
     }
 
 
