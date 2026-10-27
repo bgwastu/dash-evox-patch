@@ -107,6 +107,7 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
                         runHook("swipe haptics", () -> hookSwipeHaptics(classLoader));
                         runHook("swipe up hint", () -> hookSwipeUpHint(classLoader));
                         runHook("hypercharge", () -> hookHyperCharge(classLoader));
+                        runHook("privacy indicators", () -> hookPrivacyIndicators(classLoader));
                         XposedBridge.log("dash-evox-patch: SystemUI hooks installed");
                     }
                 }
@@ -913,6 +914,73 @@ public final class QsHeaderFix implements IXposedHookLoadPackage, IXposedHookZyg
         } catch (Throwable throwable) {
             XposedBridge.log("dash-evox-patch: " + name + " failed: " + throwable);
         }
+    }
+
+    private static final String PRIVACY_EXEMPT_PACKAGES = "dash_evox_privacy_exempt_packages";
+    private static final String DEFAULT_PRIVACY_EXEMPT_PACKAGE = "com.arlosoft.macrodroid";
+
+    private static boolean isPrivacyIndicatorExempt(String packageName) {
+        if (packageName == null || packageName.isEmpty()) {
+            return false;
+        }
+        if (contentResolver != null) {
+            String customList = Settings.Secure.getString(contentResolver, PRIVACY_EXEMPT_PACKAGES);
+            if (customList != null) {
+                String trimmed = customList.trim();
+                if ("none".equalsIgnoreCase(trimmed) || "off".equalsIgnoreCase(trimmed) || "false".equalsIgnoreCase(trimmed)) {
+                    return false;
+                }
+                for (String pkg : trimmed.split("[,;\\s]+")) {
+                    if (packageName.equalsIgnoreCase(pkg.trim())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return DEFAULT_PRIVACY_EXEMPT_PACKAGE.equals(packageName);
+    }
+
+    private static void hookPrivacyIndicators(ClassLoader classLoader) {
+        Class<?> monitorClass = XposedHelpers.findClass(
+                "com.android.systemui.privacy.AppOpsPrivacyItemMonitor", classLoader);
+        Class<?> appOpItemClass = XposedHelpers.findClass(
+                "com.android.systemui.appops.AppOpItem", classLoader);
+
+        XposedHelpers.findAndHookMethod(
+                monitorClass,
+                "toPrivacyItemLocked",
+                appOpItemClass,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        Object appOpItem = param.args[0];
+                        if (appOpItem != null) {
+                            Object pkgObj = XposedHelpers.getObjectField(appOpItem, "mPackageName");
+                            if (pkgObj instanceof String && isPrivacyIndicatorExempt((String) pkgObj)) {
+                                param.setResult(null);
+                            }
+                        }
+                    }
+                }
+        );
+
+        XposedHelpers.findAndHookMethod(
+                monitorClass,
+                "shouldDisplayLocationOp",
+                appOpItemClass,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) {
+                        Object appOpItem = param.args[0];
+                        if (appOpItem != null) {
+                            Object pkgObj = XposedHelpers.getObjectField(appOpItem, "mPackageName");
+                            if (pkgObj instanceof String && isPrivacyIndicatorExempt((String) pkgObj)) {
+                                param.setResult(false);
+                            }
+                        }
+                    }
+                }
+        );
     }
 
 }
